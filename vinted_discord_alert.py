@@ -1,31 +1,29 @@
 """
 Vinted → Discord Alert Bot
 ==========================
-Polls Vinted and sends new listings to Discord with a rich embed
-matching the layout: seller, title, published, brand, size,
-feedbacks, status, price — plus Details / Buy / Negotiate / Autobuy buttons.
+- Uses a Discord Bot Token for real working buttons
+- Loops every 5 seconds for 55 seconds (12 checks per GitHub Actions run)
+- Sends rich embeds with Details / Buy / Negotiate / Autobuy buttons
 
 Setup:
     pip install requests
 
-How to get a Discord Webhook URL:
-    1. Open Discord → channel ⚙️ → Integrations → Webhooks
-    2. New Webhook → copy URL → paste into DISCORD_WEBHOOK_URL below
-
-Run:
-    python vinted_discord_alert.py
+GitHub Secrets needed:
+    DISCORD_BOT_TOKEN   — your bot token from discord.com/developers
+    DISCORD_CHANNEL_ID  — right-click channel → Copy Channel ID
 """
 
 import time
 import json
 import os
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 # ──────────────────────────────────────────────
-#  DISCORD WEBHOOK
+#  DISCORD CONFIG (loaded from GitHub secrets)
 # ──────────────────────────────────────────────
-DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK", "")
+DISCORD_BOT_TOKEN  = os.environ.get("DISCORD_BOT_TOKEN", "")
+DISCORD_CHANNEL_ID = os.environ.get("DISCORD_CHANNEL_ID", "")
 
 # ──────────────────────────────────────────────
 #  CONFIGURE YOUR SEARCHES HERE
@@ -38,35 +36,39 @@ SEARCHES = [
         "min_price": None,
         "size_ids": [],
         "brand_ids": [],
-        "status_ids": [1, 2, 3, 4],  # excludes "new with tags" (status 6)
+        "status_ids": [1, 2, 3, 4],  # 1=new without tags, 2=very good, 3=good, 4=satisfactory
         "order": "newest_first",
     },
 ]
 
-# How often to check (seconds)
-CHECK_INTERVAL = 60
+# How often to check within each GitHub Actions run (seconds)
+CHECK_INTERVAL = 5
 
-# Country domain: co.uk, fr, de, nl, be, es, it, pl, cz, lt, etc.
+# How long to run before exiting (seconds) — keep under 60 for GitHub Actions
+RUN_DURATION = 55
+
+# Country domain: co.uk  fr  de  nl  be  es  it  pl  cz  lt ...
 VINTED_DOMAIN = "www.vinted.co.uk"
+CURRENCY_SYMBOL = "£"
 
 # ──────────────────────────────────────────────
-#  COMMON SIZE IDs (Vinted UK clothing)
-#  XS=1271, S=1272, M=1273, L=1274, XL=1275, XXL=1276
+#  COMMON SIZE IDs  (UK clothing)
+#  XS=1271  S=1272  M=1273  L=1274  XL=1275  XXL=1276
 # ──────────────────────────────────────────────
 
 # ──────────────────────────────────────────────
 #  COMMON BRAND IDs
-#  Nike=53, Adidas=14, Levi's=304, Zara=586, H&M=264, Stone Island=1047
+#  Nike=53  Adidas=14  Levi's=304  Zara=586  H&M=264  Stone Island=1047
 # ──────────────────────────────────────────────
 
 
 # ──────────────────────────────────────────────
-#  CORE BOT LOGIC
+#  INTERNALS — no need to edit below
 # ──────────────────────────────────────────────
 
 STATE_FILE = "vinted_seen_ids.json"
 
-HEADERS = {
+VINTED_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -78,10 +80,17 @@ HEADERS = {
     "Origin": f"https://{VINTED_DOMAIN}",
 }
 
-SESSION = requests.Session()
+DISCORD_HEADERS = {
+    "Authorization": f"Bot {DISCORD_BOT_TOKEN}",
+    "Content-Type": "application/json",
+}
 
 COLOURS = [0x09B1BA, 0xF5A623, 0x7ED321, 0xD0021B, 0x9B59B6, 0x3498DB]
 
+SESSION = requests.Session()
+
+
+# ── State ──────────────────────────────────────
 
 def load_seen() -> dict:
     if os.path.exists(STATE_FILE):
@@ -95,9 +104,11 @@ def save_seen(seen: dict):
         json.dump(seen, f)
 
 
+# ── Vinted API ─────────────────────────────────
+
 def get_vinted_session_cookie():
     try:
-        SESSION.get(f"https://{VINTED_DOMAIN}/", headers=HEADERS, timeout=10)
+        SESSION.get(f"https://{VINTED_DOMAIN}/", headers=VINTED_HEADERS, timeout=10)
     except requests.RequestException:
         pass
 
@@ -122,7 +133,7 @@ def fetch_listings(search: dict) -> list:
 
     url = f"https://{VINTED_DOMAIN}/api/v2/catalog/items"
     try:
-        r = SESSION.get(url, params=params, headers=HEADERS, timeout=15)
+        r = SESSION.get(url, params=params, headers=VINTED_HEADERS, timeout=15)
         r.raise_for_status()
         return r.json().get("items", [])
     except requests.HTTPError as e:
@@ -136,114 +147,96 @@ def fetch_listings(search: dict) -> list:
     return []
 
 
+# ── Discord helpers ────────────────────────────
+
+def time_ago(epoch) -> str:
+    if not epoch:
+        return "Unknown"
+    diff = int(time.time()) - int(epoch)
+    if diff < 60:
+        return f"{diff} second{'s' if diff != 1 else ''} ago"
+    elif diff < 3600:
+        m = diff // 60
+        return f"{m} minute{'s' if m != 1 else ''} ago"
+    elif diff < 86400:
+        h = diff // 3600
+        return f"{h} hour{'s' if h != 1 else ''} ago"
+    else:
+        d = diff // 86400
+        return f"{d} day{'s' if d != 1 else ''} ago"
+
+
 def star_rating(score) -> str:
-    """Convert a 0–1 or 0–5 reputation score to star emojis."""
-    try:
-        val = float(score)
-        # Vinted feedback_reputation is 0–1; convert to 0–5
-        if val <= 1.0:
-            val = val * 5
-        full = round(val)
-        full = max(0, min(5, full))
-        return "⭐" * full + "☆" * (5 - full)
-    except (TypeError, ValueError):
-        return "☆☆☆☆☆"
-
-
-def time_ago(updated_at) -> str:
-    try:
-        if isinstance(updated_at, (int, float)):
-            then = datetime.utcfromtimestamp(updated_at)
-        else:
-            then = datetime.fromisoformat(str(updated_at).replace("Z", ""))
-        diff = datetime.utcnow() - then
-        seconds = int(diff.total_seconds())
-        if seconds < 60:
-            return f"{seconds} seconds ago"
-        elif seconds < 3600:
-            return f"{seconds // 60} minutes ago"
-        elif seconds < 86400:
-            return f"{seconds // 3600} hours ago"
-        else:
-            return f"{seconds // 86400} days ago"
-    except Exception:
-        return "just now"
-
-
-def resolve_item_url(item: dict) -> str:
-    url = item.get("url", "")
-    if url and not url.startswith("http"):
-        url = f"https://{VINTED_DOMAIN}{url}"
-    return url
+    if score is None:
+        return "No ratings"
+    full = max(0, min(5, round(score * 5)))
+    return "⭐" * full + "✩" * (5 - full)
 
 
 def build_payload(label: str, item: dict, colour: int) -> dict:
-    url = resolve_item_url(item)
-    item_id = item.get("id", "")
+    # Item URL
+    url = item.get("url", "")
+    if url and not url.startswith("http"):
+        url = f"https://{VINTED_DOMAIN}{url}"
 
-    # ── Seller ───────────────────────────────────
-    seller = item.get("user", {})
-    seller_name = seller.get("login", "Unknown")
-    seller_id = seller.get("id", "")
-    seller_url = f"https://{VINTED_DOMAIN}/member/{seller_id}"
+    # Seller
+    user = item.get("user", {})
+    seller = user.get("login", "Unknown seller")
+    seller_id = user.get("id")
+    seller_url = f"https://{VINTED_DOMAIN}/member/{seller_id}" if seller_id else url
 
-    # ── Price ─────────────────────────────────────
+    # Price
     price_obj = item.get("price", {})
     amount = price_obj.get("amount", "?")
-    currency = price_obj.get("currency_code", "EUR")
-    price_str = f"{amount} {currency}"
+    price_str = f"{CURRENCY_SYMBOL}{amount}"
 
-    # ── Feedback ──────────────────────────────────
-    feedback_count = seller.get("feedback_count", 0)
-    feedback_score = seller.get("feedback_reputation", None)
-    stars = star_rating(feedback_score)
-    feedback_str = f"{stars} ({feedback_count})"
+    # Fields
+    brand      = item.get("brand_title") or "—"
+    size       = item.get("size_title")  or "—"
+    condition  = item.get("status")      or "—"
+    created_at = item.get("created_at_ts") or item.get("created_at")
+    published  = time_ago(created_at)
 
-    # ── Published ─────────────────────────────────
-    published = time_ago(item.get("updated_at") or item.get("created_at_ts"))
+    # Feedback
+    feedback_score = user.get("feedback_reputation")
+    feedback_count = user.get("positive_feedback_count", 0)
+    stars          = star_rating(feedback_score)
+    feedback_str   = f"{stars} ({feedback_count})"
 
-    # ── Photos ────────────────────────────────────
-    photos = item.get("photos", [])
+    # Photo
+    photos    = item.get("photos", [])
     image_url = None
     if photos:
         image_url = (
             photos[0].get("full_size_url")
             or photos[0].get("url")
-            or ((photos[0].get("thumbnails") or [{}])[-1].get("url"))
+            or (photos[0].get("thumbnails") or [{}])[-1].get("url")
         )
 
-    # ── Embed ─────────────────────────────────────
     embed = {
-        "author": {
-            "name": f"👤 {seller_name}",
-            "url": seller_url,
-        },
+        "author": {"name": seller, "url": seller_url},
         "title": item.get("title", "New listing"),
         "url": url,
         "color": colour,
         "fields": [
-            {"name": "⏳ Published",  "value": published,                           "inline": True},
-            {"name": "🏷️ Brand",     "value": item.get("brand_title") or "—",      "inline": True},
-            {"name": "📐 Size",       "value": item.get("size_title") or "—",       "inline": True},
-            {"name": "🌟 Feedbacks",  "value": feedback_str,                        "inline": True},
-            {"name": "💎 Status",     "value": item.get("status") or "—",           "inline": True},
-            {"name": "💰 Price",      "value": price_str,                           "inline": True},
+            {"name": "⏳ Published", "value": published,    "inline": True},
+            {"name": "🏷️ Brand",     "value": brand,        "inline": True},
+            {"name": "📐 Size",       "value": size,         "inline": True},
+            {"name": "⭐ Feedbacks",  "value": feedback_str, "inline": True},
+            {"name": "💎 Status",     "value": condition,    "inline": True},
+            {"name": "💰 Price",      "value": price_str,    "inline": True},
         ],
         "footer": {"text": f"🔍 Search: {label}"},
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
     if image_url:
         embed["image"] = {"url": image_url}
 
-    # ── Buttons ───────────────────────────────────
-    # Discord webhooks support only style=5 (Link) buttons.
-    # All four buttons link to the item; Buy/Negotiate use Vinted's deep paths.
-    negotiate_url = f"https://{VINTED_DOMAIN}/items/{item_id}/want"
-
+    # Real working buttons via bot token
     components = [
         {
-            "type": 1,  # Action Row
+            "type": 1,
             "components": [
                 {
                     "type": 2, "style": 5,
@@ -261,104 +254,110 @@ def build_payload(label: str, item: dict, colour: int) -> dict:
                     "type": 2, "style": 5,
                     "label": "Negotiate",
                     "emoji": {"name": "💬"},
-                    "url": negotiate_url,
+                    "url": url,
                 },
                 {
                     "type": 2, "style": 5,
-                    "label": "Autobuy ✅",
+                    "label": "Autobuy",
+                    "emoji": {"name": "✅"},
                     "url": url,
                 },
             ],
         }
     ]
 
-    return {
-        "username": "Vinted Alert",
-        "avatar_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/14/Vinted_logo.svg/512px-Vinted_logo.svg.png",
-        "embeds": [embed],
-        "components": components,
-    }
+    return {"embeds": [embed], "components": components}
 
 
 def send_discord(label: str, item: dict, colour: int):
     payload = build_payload(label, item, colour)
+    url = f"https://discord.com/api/v10/channels/{DISCORD_CHANNEL_ID}/messages"
     try:
-        r = requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=10)
+        r = requests.post(url, headers=DISCORD_HEADERS, json=payload, timeout=10)
         r.raise_for_status()
     except requests.HTTPError as e:
         print(f"  [!] Discord error {e.response.status_code}: {e.response.text}")
     except requests.RequestException as e:
-        print(f"  [!] Discord webhook error: {e}")
+        print(f"  [!] Discord error: {e}")
 
 
-def validate_webhook():
-    if DISCORD_WEBHOOK_URL == "PASTE_YOUR_WEBHOOK_URL_HERE" or not DISCORD_WEBHOOK_URL:
+# ── Validation ─────────────────────────────────
+
+def validate():
+    errors = []
+    if not DISCORD_BOT_TOKEN:
+        errors.append("DISCORD_BOT_TOKEN secret is missing")
+    if not DISCORD_CHANNEL_ID:
+        errors.append("DISCORD_CHANNEL_ID secret is missing")
+    if errors:
         print("=" * 55)
-        print("  ERROR: No Discord webhook URL configured!")
-        print("  Edit DISCORD_WEBHOOK_URL at the top of the script.")
+        for e in errors:
+            print(f"  ERROR: {e}")
         print("=" * 55)
         raise SystemExit(1)
 
 
+# ── Main loop ──────────────────────────────────
+
 def run():
-    validate_webhook()
+    validate()
 
     print("=" * 55)
-    print("  Vinted → Discord Alert Bot  |  Ctrl+C to stop")
+    print("  Vinted -> Discord Alert Bot")
+    print(f"  Checking every {CHECK_INTERVAL}s for {RUN_DURATION}s")
     print("=" * 55)
     for s in SEARCHES:
-        print(f"  • {s['label']}")
-    print(f"\nChecking every {CHECK_INTERVAL}s  |  domain: {VINTED_DOMAIN}\n")
+        print(f"  * {s['label']}")
+    print()
 
     get_vinted_session_cookie()
     seen = load_seen()
 
-    print("Seeding existing listings (no alerts on first run)…")
-    for search in SEARCHES:
-        key = search["label"]
-        items = fetch_listings(search)
-        if key not in seen:
-            seen[key] = []
-        for item in items:
-            if str(item["id"]) not in seen[key]:
-                seen[key].append(str(item["id"]))
-    save_seen(seen)
-    print("Done. Watching for NEW listings…\n")
+    # Seed on very first run only
+    first_run = not bool(seen)
+    if first_run:
+        print("First run — seeding existing listings (no alerts)...")
+        for search in SEARCHES:
+            key = search["label"]
+            items = fetch_listings(search)
+            seen.setdefault(key, [])
+            for item in items:
+                iid = str(item["id"])
+                if iid not in seen[key]:
+                    seen[key].append(iid)
+        save_seen(seen)
+        print("Done. Future runs will alert on new listings.\n")
+        return
 
     label_colours = {
         s["label"]: COLOURS[i % len(COLOURS)] for i, s in enumerate(SEARCHES)
     }
 
-    while True:
-        try:
-            time.sleep(CHECK_INTERVAL)
-            ts = datetime.now().strftime("%H:%M:%S")
-            print(f"[{ts}] Checking…", end=" ", flush=True)
-            found_new = 0
+    start_time = time.time()
+    checks = 0
 
-            for search in SEARCHES:
-                key = search["label"]
-                colour = label_colours[key]
-                items = fetch_listings(search)
-                if key not in seen:
-                    seen[key] = []
+    while time.time() - start_time < RUN_DURATION:
+        checks += 1
+        ts = datetime.now().strftime("%H:%M:%S")
+        print(f"[{ts}] Check #{checks}...", end=" ", flush=True)
+        found_new = 0
 
-                for item in items:
-                    item_id = str(item["id"])
-                    if item_id not in seen[key]:
-                        seen[key].append(item_id)
-                        send_discord(key, item, colour)
-                        found_new += 1
+        for search in SEARCHES:
+            key    = search["label"]
+            colour = label_colours[key]
+            items  = fetch_listings(search)
+            seen.setdefault(key, [])
 
-            save_seen(seen)
-            print(f"{found_new} new item(s) found." if found_new else "nothing new.")
+            for item in items:
+                iid = str(item["id"])
+                if iid not in seen[key]:
+                    seen[key].append(iid)
+                    send_discord(key, item, colour)
+                    found_new += 1
 
-        except KeyboardInterrupt:
-            print("\n\nBot stopped. Goodbye!")
-            break
-        except Exception as e:
-            print(f"\n[!] Unexpected error: {e}")
-            time.sleep(10)
+        save_seen(seen)
+        print(f"{found_new} new item(s)." if found_new else "nothing new.")
+        time.sleep(CHECK_INTERVAL)
 
 
 if __name__ == "__main__":
