@@ -296,8 +296,8 @@ def build_payload(label: str, item: dict, colour: int) -> dict:
     status_id    = item.get("status_id")
     condition    = CONDITION_LABELS.get(status_id, raw_status) if status_id else raw_status or "—"
 
-    # Published — Vinted search API does not return date
-    # Use item_box data if available, otherwise mark as "just now"
+    # Published — use Discord relative timestamp (<t:unix:R> = "X minutes ago")
+    # Vinted search API does not include created_at so we use current time
     created_at = (
         item.get("created_at_ts")
         or item.get("created_at")
@@ -306,7 +306,21 @@ def build_payload(label: str, item: dict, colour: int) -> dict:
         or (item.get("item_box") or {}).get("created_at_ts")
         or (item.get("item_box") or {}).get("created_at")
     )
-    published = time_ago(created_at) if created_at else "Just listed"
+    if created_at:
+        # Try to get unix timestamp
+        try:
+            unix_ts = int(float(str(created_at)))
+        except (TypeError, ValueError):
+            try:
+                from datetime import timezone as tz
+                s = str(created_at)[:19]
+                dt = datetime.strptime(s, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=tz.utc)
+                unix_ts = int(dt.timestamp())
+            except Exception:
+                unix_ts = int(time.time())
+    else:
+        unix_ts = int(time.time())
+    published = f"<t:{unix_ts}:R>"  # Discord relative timestamp e.g. "2 minutes ago"
 
     # Feedback — try multiple field names Vinted uses
     feedback_score = (
