@@ -2,10 +2,7 @@ name: Vinted Alert Bot
 
 on:
   schedule:
-    - cron: '*/5 * * * *'
-  push:
-    branches:
-      - main
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 jobs:
@@ -13,20 +10,34 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-      - run: pip install requests
-      - run: python vinted_discord_alert.py
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run bot loop
         env:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
-      - name: Save seen IDs
         run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git add vinted_seen_ids.json || true
-          git diff --cached --quiet || git commit -m "Update seen IDs"
-          git push || true
+          while true
+          do
+            python vinted_discord_alert.py
+
+            git config user.name "github-actions"
+            git config user.email "github-actions@github.com"
+            git add vinted_seen_ids.json || true
+            git diff --cached --quiet || git commit -m "Update seen IDs"
+            git push || true
+
+            echo "Sleeping 30 seconds..."
+            sleep 30
+          done
