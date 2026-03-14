@@ -149,6 +149,17 @@ def fetch_listings(search: dict) -> list:
     return []
 
 
+def fetch_item_details(item_id) -> dict:
+    """Fetch full item details to get rating, date etc."""
+    url = f"https://{VINTED_DOMAIN}/api/v2/items/{item_id}"
+    try:
+        r = SESSION.get(url, headers=VINTED_HEADERS, timeout=10)
+        r.raise_for_status()
+        return r.json().get("item", {})
+    except Exception:
+        return {}
+
+
 def matches_exclude_words(item: dict, exclude_words: list) -> bool:
     """Returns True if item title contains any excluded word."""
     if not exclude_words:
@@ -224,6 +235,14 @@ def build_payload(label: str, item: dict, colour: int) -> dict:
     item_url   = get_item_url(item)
     item_id    = item.get("id", "")
 
+    # Fetch full item to get accurate date, feedback, condition etc.
+    full = fetch_item_details(item_id)
+    if full:
+        item = {**item, **full}
+        # Merge user data
+        if full.get("user"):
+            item["user"] = {**item.get("user", {}), **full["user"]}
+
     # Construct specific action URLs
     buy_url       = f"https://{VINTED_DOMAIN}/transaction/buy/item/{item_id}" if item_id else item_url
     negotiate_url = f"https://{VINTED_DOMAIN}/items/{item_id}/make_offer" if item_id else item_url
@@ -256,8 +275,6 @@ def build_payload(label: str, item: dict, colour: int) -> dict:
         or item.get("updated_at_ts")
         or item.get("updated_at")
     )
-    # Debug: print raw value so we can see what Vinted returns
-    print(f"  [debug] created_at raw = {repr(created_at)}")
     published = time_ago(created_at)
 
     # Feedback — try multiple field names Vinted uses
@@ -271,10 +288,6 @@ def build_payload(label: str, item: dict, colour: int) -> dict:
         or user.get("feedback_count")
         or 0
     )
-    # Debug: print raw values
-    print(f"  [debug] user keys = {list(user.keys())}")
-    print(f"  [debug] feedback_reputation = {repr(user.get('feedback_reputation'))}")
-    print(f"  [debug] feedback_score raw = {repr(feedback_score)}")
     stars        = star_rating(feedback_score)
     feedback_str = f"{stars} ({feedback_count})"
 
