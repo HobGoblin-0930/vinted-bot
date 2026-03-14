@@ -356,10 +356,7 @@ def build_payload(label: str, item: dict, colour: int) -> dict:
         {
             "type": 1,
             "components": [
-                {"type": 2, "style": 5, "label": "Details",   "emoji": {"name": "🔗"}, "url": details_url},
-                {"type": 2, "style": 5, "label": "Buy",       "emoji": {"name": "🛒"}, "url": buy_url},
-                {"type": 2, "style": 5, "label": "Negotiate", "emoji": {"name": "💬"}, "url": negotiate_url},
-                {"type": 2, "style": 5, "label": "Autobuy",   "emoji": {"name": "✅"}, "url": buy_url},
+                {"type": 2, "style": 5, "label": "View Listing", "emoji": {"name": "🔗"}, "url": item_url},
             ],
         }
     ]
