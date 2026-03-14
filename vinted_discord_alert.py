@@ -290,9 +290,14 @@ def build_payload(label: str, item: dict, colour: int) -> dict:
     return {"embeds": [embed], "components": components}
 
 
-def send_discord(label: str, item: dict, colour: int):
+def send_discord(label: str, item: dict, colour: int, channel_id: str = None):
+    # Use per-search channel if set, otherwise fall back to default
+    target_channel = channel_id if channel_id else DISCORD_CHANNEL_ID
+    if not target_channel:
+        print(f"  [!] No channel ID configured for '{label}' — skipping")
+        return
     payload = build_payload(label, item, colour)
-    url     = f"https://discord.com/api/v10/channels/{DISCORD_CHANNEL_ID}/messages"
+    url     = f"https://discord.com/api/v10/channels/{target_channel}/messages"
     headers = {
         "Authorization": f"Bot {DISCORD_BOT_TOKEN}",
         "Content-Type": "application/json",
@@ -339,7 +344,8 @@ def run():
     for s in searches:
         excl = s.get("exclude_words", [])
         excl_str = f" | exclude: {', '.join(excl)}" if excl else ""
-        print(f"  * {s['label']}{excl_str}")
+        ch_str   = f" | channel: {s['channel_id']}" if s.get('channel_id') else f" | channel: default ({DISCORD_CHANNEL_ID})"
+        print(f"  * {s['label']}{excl_str}{ch_str}")
     print()
 
     get_vinted_session_cookie()
@@ -387,7 +393,7 @@ def run():
                 if matches_exclude_words(item, exclude_words):
                     print(f"\n  [skip] '{item.get('title')}' matches exclude words")
                     continue
-                send_discord(key, item, colour)
+                send_discord(key, item, colour, search.get("channel_id"))
                 found_new += 1
 
         save_seen(seen)
