@@ -13,7 +13,31 @@
       4
     ],
     "order": "newest_first",
-    "enabled": true
+    "enabled": true,
+    "keywords": [
+      "xbox controller",
+      "Exbox controller",
+      "X box controler",
+      "Zbox controller",
+      "Sbox controller",
+      "Xboc controller",
+      "Xbox controlller",
+      "X-box contraller",
+      "Xbox conroller",
+      "Xbox contoller",
+      "Xbos controller",
+      "Xbx controller",
+      "Xb1 controller",
+      "Xbox remote",
+      "Xbox joypad",
+      "MS controller",
+      "Xbox game pad",
+      "Xbox series x controler",
+      "Microsoft gamepad",
+      "Xbox one controler",
+      "Xbox elite series 2 controler"
+    ],
+    "exclude_words": []
   },
   {
     "label": "Xbox Series",
