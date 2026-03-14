@@ -151,27 +151,29 @@ def fetch_listings(search: dict) -> list:
 
 def fetch_item_details(item_id) -> dict:
     """Fetch full item details to get rating, date etc."""
-    url = f"https://{VINTED_DOMAIN}/api/v2/items/{item_id}"
-    try:
-        r = SESSION.get(url, headers=VINTED_HEADERS, timeout=10)
-        print(f"  [debug] item API status = {r.status_code} for id={item_id}")
-        if r.status_code == 200:
-            data = r.json()
-            print(f"  [debug] response top keys = {list(data.keys())}")
-            item = data.get("item", data)
-            print(f"  [debug] item keys = {list(item.keys())[:15]}")
-            user = item.get("user", {})
-            print(f"  [debug] user keys = {list(user.keys())[:15]}")
-            print(f"  [debug] created_at = {repr(item.get('created_at'))}")
-            print(f"  [debug] created_at_ts = {repr(item.get('created_at_ts'))}")
-            print(f"  [debug] feedback_reputation = {repr(user.get('feedback_reputation'))}")
-            return item
-        else:
-            print(f"  [debug] error body = {r.text[:200]}")
-            return {}
-    except Exception as e:
-        print(f"  [debug] fetch_item_details exception: {e}")
-        return {}
+    # Try both known Vinted API endpoints
+    urls = [
+        f"https://{VINTED_DOMAIN}/api/v2/items/{item_id}",
+        f"https://{VINTED_DOMAIN}/api/v2/catalog/items/{item_id}",
+    ]
+    for url in urls:
+        try:
+            r = SESSION.get(url, headers=VINTED_HEADERS, timeout=10)
+            print(f"  [debug] {url} -> {r.status_code}")
+            if r.status_code == 200:
+                data = r.json()
+                print(f"  [debug] top keys = {list(data.keys())}")
+                item = data.get("item", data)
+                user = item.get("user", {})
+                print(f"  [debug] item keys = {list(item.keys())[:15]}")
+                print(f"  [debug] user keys = {list(user.keys())[:15]}")
+                print(f"  [debug] created_at = {repr(item.get('created_at'))}")
+                print(f"  [debug] created_at_ts = {repr(item.get('created_at_ts'))}")
+                print(f"  [debug] feedback_reputation = {repr(user.get('feedback_reputation'))}")
+                return item
+        except Exception as e:
+            print(f"  [debug] exception: {e}")
+    return {}
 
 
 def matches_exclude_words(item: dict, exclude_words: list) -> bool:
