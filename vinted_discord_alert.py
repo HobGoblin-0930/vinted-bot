@@ -1,16 +1,13 @@
 """
 Vinted → Discord Alert Bot
 ==========================
+- Reads searches from vinted_searches.json (managed via the dashboard)
 - Uses a Discord Bot Token for real working buttons
 - Loops every 5 seconds for 55 seconds (12 checks per GitHub Actions run)
-- Sends rich embeds with Details / Buy / Negotiate / Autobuy buttons
-
-Setup:
-    pip install requests
 
 GitHub Secrets needed:
     DISCORD_BOT_TOKEN   — your bot token from discord.com/developers
-    DISCORD_CHANNEL_ID  — right-click channel → Copy Channel ID
+    DISCORD_CHANNEL_ID  — right-click channel in Discord → Copy Channel ID
 """
 
 import time
@@ -26,9 +23,11 @@ DISCORD_BOT_TOKEN  = os.environ.get("DISCORD_BOT_TOKEN", "")
 DISCORD_CHANNEL_ID = os.environ.get("DISCORD_CHANNEL_ID", "")
 
 # ──────────────────────────────────────────────
-#  CONFIGURE YOUR SEARCHES HERE
+#  SEARCHES — managed via dashboard
+#  Loaded from vinted_searches.json automatically.
+#  You can also hardcode fallback searches here.
 # ──────────────────────────────────────────────
-SEARCHES = [
+FALLBACK_SEARCHES = [
     {
         "label": "Xbox Controller",
         "search_text": "xbox controller",
@@ -36,37 +35,29 @@ SEARCHES = [
         "min_price": None,
         "size_ids": [],
         "brand_ids": [],
-        "status_ids": [1, 2, 3, 4],  # 1=new without tags, 2=very good, 3=good, 4=satisfactory
+        "status_ids": [1, 2, 3, 4],
         "order": "newest_first",
+        "enabled": True,
     },
 ]
 
 # How often to check within each GitHub Actions run (seconds)
 CHECK_INTERVAL = 5
 
-# How long to run before exiting (seconds) — keep under 60 for GitHub Actions
+# How long to run before exiting — keep under 60 for GitHub Actions
 RUN_DURATION = 55
 
 # Country domain: co.uk  fr  de  nl  be  es  it  pl  cz  lt ...
 VINTED_DOMAIN = "www.vinted.co.uk"
 CURRENCY_SYMBOL = "£"
 
-# ──────────────────────────────────────────────
-#  COMMON SIZE IDs  (UK clothing)
-#  XS=1271  S=1272  M=1273  L=1274  XL=1275  XXL=1276
-# ──────────────────────────────────────────────
 
 # ──────────────────────────────────────────────
-#  COMMON BRAND IDs
-#  Nike=53  Adidas=14  Levi's=304  Zara=586  H&M=264  Stone Island=1047
+#  INTERNALS
 # ──────────────────────────────────────────────
 
-
-# ──────────────────────────────────────────────
-#  INTERNALS — no need to edit below
-# ──────────────────────────────────────────────
-
-STATE_FILE = "vinted_seen_ids.json"
+STATE_FILE   = "vinted_seen_ids.json"
+SEARCHES_FILE = "vinted_searches.json"
 
 VINTED_HEADERS = {
     "User-Agent": (
@@ -80,14 +71,24 @@ VINTED_HEADERS = {
     "Origin": f"https://{VINTED_DOMAIN}",
 }
 
-DISCORD_HEADERS = {
-    "Authorization": f"Bot {DISCORD_BOT_TOKEN}",
-    "Content-Type": "application/json",
-}
-
 COLOURS = [0x09B1BA, 0xF5A623, 0x7ED321, 0xD0021B, 0x9B59B6, 0x3498DB]
-
 SESSION = requests.Session()
+
+
+# ── Searches ───────────────────────────────────
+
+def load_searches() -> list:
+    """Load searches from JSON file, falling back to hardcoded list."""
+    if os.path.exists(SEARCHES_FILE):
+        with open(SEARCHES_FILE) as f:
+            all_searches = json.load(f)
+        # Only return enabled searches
+        enabled = [s for s in all_searches if s.get("enabled", True)]
+        if enabled:
+            print(f"  Loaded {len(enabled)} search(es) from {SEARCHES_FILE}")
+            return enabled
+    print(f"  Using fallback searches ({len(FALLBACK_SEARCHES)} search(es))")
+    return FALLBACK_SEARCHES
 
 
 # ── State ──────────────────────────────────────
@@ -147,7 +148,7 @@ def fetch_listings(search: dict) -> list:
     return []
 
 
-# ── Discord helpers ────────────────────────────
+# ── Discord ────────────────────────────────────
 
 def time_ago(epoch) -> str:
     if not epoch:
@@ -174,36 +175,29 @@ def star_rating(score) -> str:
 
 
 def build_payload(label: str, item: dict, colour: int) -> dict:
-    # Item URL
     url = item.get("url", "")
     if url and not url.startswith("http"):
         url = f"https://{VINTED_DOMAIN}{url}"
 
-    # Seller
     user = item.get("user", {})
     seller = user.get("login", "Unknown seller")
     seller_id = user.get("id")
     seller_url = f"https://{VINTED_DOMAIN}/member/{seller_id}" if seller_id else url
 
-    # Price
     price_obj = item.get("price", {})
-    amount = price_obj.get("amount", "?")
+    amount    = price_obj.get("amount", "?")
     price_str = f"{CURRENCY_SYMBOL}{amount}"
 
-    # Fields
     brand      = item.get("brand_title") or "—"
     size       = item.get("size_title")  or "—"
     condition  = item.get("status")      or "—"
     created_at = item.get("created_at_ts") or item.get("created_at")
     published  = time_ago(created_at)
 
-    # Feedback
     feedback_score = user.get("feedback_reputation")
     feedback_count = user.get("positive_feedback_count", 0)
-    stars          = star_rating(feedback_score)
-    feedback_str   = f"{stars} ({feedback_count})"
+    feedback_str   = f"{star_rating(feedback_score)} ({feedback_count})"
 
-    # Photo
     photos    = item.get("photos", [])
     image_url = None
     if photos:
@@ -233,35 +227,14 @@ def build_payload(label: str, item: dict, colour: int) -> dict:
     if image_url:
         embed["image"] = {"url": image_url}
 
-    # Real working buttons via bot token
     components = [
         {
             "type": 1,
             "components": [
-                {
-                    "type": 2, "style": 5,
-                    "label": "Details",
-                    "emoji": {"name": "🔗"},
-                    "url": url,
-                },
-                {
-                    "type": 2, "style": 5,
-                    "label": "Buy",
-                    "emoji": {"name": "🛒"},
-                    "url": url,
-                },
-                {
-                    "type": 2, "style": 5,
-                    "label": "Negotiate",
-                    "emoji": {"name": "💬"},
-                    "url": url,
-                },
-                {
-                    "type": 2, "style": 5,
-                    "label": "Autobuy",
-                    "emoji": {"name": "✅"},
-                    "url": url,
-                },
+                {"type": 2, "style": 5, "label": "Details",  "emoji": {"name": "🔗"}, "url": url},
+                {"type": 2, "style": 5, "label": "Buy",      "emoji": {"name": "🛒"}, "url": url},
+                {"type": 2, "style": 5, "label": "Negotiate","emoji": {"name": "💬"}, "url": url},
+                {"type": 2, "style": 5, "label": "Autobuy",  "emoji": {"name": "✅"}, "url": url},
             ],
         }
     ]
@@ -271,9 +244,13 @@ def build_payload(label: str, item: dict, colour: int) -> dict:
 
 def send_discord(label: str, item: dict, colour: int):
     payload = build_payload(label, item, colour)
-    url = f"https://discord.com/api/v10/channels/{DISCORD_CHANNEL_ID}/messages"
+    url     = f"https://discord.com/api/v10/channels/{DISCORD_CHANNEL_ID}/messages"
+    headers = {
+        "Authorization": f"Bot {DISCORD_BOT_TOKEN}",
+        "Content-Type": "application/json",
+    }
     try:
-        r = requests.post(url, headers=DISCORD_HEADERS, json=payload, timeout=10)
+        r = requests.post(url, headers=headers, json=payload, timeout=10)
         r.raise_for_status()
     except requests.HTTPError as e:
         print(f"  [!] Discord error {e.response.status_code}: {e.response.text}")
@@ -297,27 +274,33 @@ def validate():
         raise SystemExit(1)
 
 
-# ── Main loop ──────────────────────────────────
+# ── Main ───────────────────────────────────────
 
 def run():
     validate()
+
+    searches = load_searches()
+
+    if not searches:
+        print("No searches configured — nothing to do.")
+        return
 
     print("=" * 55)
     print("  Vinted -> Discord Alert Bot")
     print(f"  Checking every {CHECK_INTERVAL}s for {RUN_DURATION}s")
     print("=" * 55)
-    for s in SEARCHES:
+    for s in searches:
         print(f"  * {s['label']}")
     print()
 
     get_vinted_session_cookie()
     seen = load_seen()
 
-    # Seed on very first run only
+    # Seed on very first run
     first_run = not bool(seen)
     if first_run:
         print("First run — seeding existing listings (no alerts)...")
-        for search in SEARCHES:
+        for search in searches:
             key = search["label"]
             items = fetch_listings(search)
             seen.setdefault(key, [])
@@ -330,11 +313,11 @@ def run():
         return
 
     label_colours = {
-        s["label"]: COLOURS[i % len(COLOURS)] for i, s in enumerate(SEARCHES)
+        s["label"]: COLOURS[i % len(COLOURS)] for i, s in enumerate(searches)
     }
 
     start_time = time.time()
-    checks = 0
+    checks     = 0
 
     while time.time() - start_time < RUN_DURATION:
         checks += 1
@@ -342,9 +325,9 @@ def run():
         print(f"[{ts}] Check #{checks}...", end=" ", flush=True)
         found_new = 0
 
-        for search in SEARCHES:
+        for search in searches:
             key    = search["label"]
-            colour = label_colours[key]
+            colour = label_colours.get(key, COLOURS[0])
             items  = fetch_listings(search)
             seen.setdefault(key, [])
 
@@ -362,4 +345,3 @@ def run():
 
 if __name__ == "__main__":
     run()
-
