@@ -242,6 +242,11 @@ def build_payload(label: str, item: dict, colour: int) -> dict:
         # Merge user data
         if full.get("user"):
             item["user"] = {**item.get("user", {}), **full["user"]}
+        print(f"  [debug] full item keys = {list(full.keys())}")
+        print(f"  [debug] full user keys = {list(full.get('user', {}).keys())}")
+        print(f"  [debug] created_at = {repr(full.get('created_at'))}")
+        print(f"  [debug] created_at_ts = {repr(full.get('created_at_ts'))}")
+        print(f"  [debug] feedback_reputation = {repr(full.get('user', {}).get('feedback_reputation'))}")
 
     # Construct specific action URLs
     buy_url       = f"https://{VINTED_DOMAIN}/transaction/buy/item/{item_id}" if item_id else item_url
