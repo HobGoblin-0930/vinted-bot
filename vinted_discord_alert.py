@@ -256,6 +256,8 @@ def build_payload(label: str, item: dict, colour: int) -> dict:
         or item.get("updated_at_ts")
         or item.get("updated_at")
     )
+    # Debug: print raw value so we can see what Vinted returns
+    print(f"  [debug] created_at raw = {repr(created_at)}")
     published = time_ago(created_at)
 
     # Feedback — try multiple field names Vinted uses
@@ -269,6 +271,10 @@ def build_payload(label: str, item: dict, colour: int) -> dict:
         or user.get("feedback_count")
         or 0
     )
+    # Debug: print raw values
+    print(f"  [debug] user keys = {list(user.keys())}")
+    print(f"  [debug] feedback_reputation = {repr(user.get('feedback_reputation'))}")
+    print(f"  [debug] feedback_score raw = {repr(feedback_score)}")
     stars        = star_rating(feedback_score)
     feedback_str = f"{stars} ({feedback_count})"
 
