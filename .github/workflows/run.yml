@@ -16,4 +16,4 @@ jobs:
       - run: pip install requests
       - run: python vinted_discord_alert.py
         env:
-          WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK }}
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
