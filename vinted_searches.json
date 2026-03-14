@@ -14,5 +14,21 @@
     ],
     "order": "newest_first",
     "enabled": true
+  },
+  {
+    "label": "Xbox Series",
+    "search_text": "xbox series",
+    "max_price": null,
+    "min_price": 15,
+    "size_ids": [],
+    "brand_ids": [],
+    "status_ids": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "order": "newest_first",
+    "enabled": true
   }
 ]
