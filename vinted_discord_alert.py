@@ -154,9 +154,23 @@ def fetch_item_details(item_id) -> dict:
     url = f"https://{VINTED_DOMAIN}/api/v2/items/{item_id}"
     try:
         r = SESSION.get(url, headers=VINTED_HEADERS, timeout=10)
-        r.raise_for_status()
-        return r.json().get("item", {})
-    except Exception:
+        print(f"  [debug] item API status = {r.status_code} for id={item_id}")
+        if r.status_code == 200:
+            data = r.json()
+            print(f"  [debug] response top keys = {list(data.keys())}")
+            item = data.get("item", data)
+            print(f"  [debug] item keys = {list(item.keys())[:15]}")
+            user = item.get("user", {})
+            print(f"  [debug] user keys = {list(user.keys())[:15]}")
+            print(f"  [debug] created_at = {repr(item.get('created_at'))}")
+            print(f"  [debug] created_at_ts = {repr(item.get('created_at_ts'))}")
+            print(f"  [debug] feedback_reputation = {repr(user.get('feedback_reputation'))}")
+            return item
+        else:
+            print(f"  [debug] error body = {r.text[:200]}")
+            return {}
+    except Exception as e:
+        print(f"  [debug] fetch_item_details exception: {e}")
         return {}
 
 
