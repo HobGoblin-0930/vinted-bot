@@ -1,0 +1,18 @@
+[
+  {
+    "label": "Xbox Controller",
+    "search_text": "xbox controller",
+    "max_price": 15,
+    "min_price": null,
+    "size_ids": [],
+    "brand_ids": [],
+    "status_ids": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "order": "newest_first",
+    "enabled": true
+  }
+]
