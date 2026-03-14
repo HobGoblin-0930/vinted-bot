@@ -18,3 +18,10 @@ jobs:
         env:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
+      - name: Save seen IDs
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add vinted_seen_ids.json
+          git diff --cached --quiet || git commit -m "Update seen IDs"
+          git push
