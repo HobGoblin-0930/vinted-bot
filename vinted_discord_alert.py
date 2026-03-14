@@ -149,6 +149,19 @@ def fetch_listings(search: dict) -> list:
     return []
 
 
+def fetch_user_profile(user_id) -> dict:
+    """Fetch user profile to get feedback rating."""
+    url = f"https://{VINTED_DOMAIN}/api/v2/users/{user_id}"
+    try:
+        r = SESSION.get(url, headers=VINTED_HEADERS, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            return data.get("user", {})
+    except Exception:
+        pass
+    return {}
+
+
 def fetch_item_details(item_id) -> dict:
     """Fetch full item details to get rating, date etc."""
     # Try both known Vinted API endpoints
@@ -251,13 +264,12 @@ def build_payload(label: str, item: dict, colour: int) -> dict:
     item_url   = get_item_url(item)
     item_id    = item.get("id", "")
 
-    # Debug: log raw search item fields
-    print(f"  [debug] item keys = {list(item.keys())}")
-    print(f"  [debug] user keys = {list(item.get('user', {}).keys())}")
-    print(f"  [debug] created_at = {repr(item.get('created_at'))}")
-    print(f"  [debug] created_at_ts = {repr(item.get('created_at_ts'))}")
-    print(f"  [debug] last_push_up_at = {repr(item.get('last_push_up_at'))}")
-    print(f"  [debug] user = {item.get('user', {})}")
+    # Fetch user profile for feedback rating (public endpoint)
+    user_id = item.get("user", {}).get("id")
+    if user_id:
+        user_profile = fetch_user_profile(user_id)
+        if user_profile:
+            item["user"] = {**item.get("user", {}), **user_profile}
 
     # Construct specific action URLs
     buy_url       = f"https://{VINTED_DOMAIN}/transaction/buy/item/{item_id}" if item_id else item_url
@@ -284,14 +296,17 @@ def build_payload(label: str, item: dict, colour: int) -> dict:
     status_id    = item.get("status_id")
     condition    = CONDITION_LABELS.get(status_id, raw_status) if status_id else raw_status or "—"
 
-    # Published time — try all possible field names
+    # Published — Vinted search API does not return date
+    # Use item_box data if available, otherwise mark as "just now"
     created_at = (
         item.get("created_at_ts")
         or item.get("created_at")
         or item.get("updated_at_ts")
         or item.get("updated_at")
+        or (item.get("item_box") or {}).get("created_at_ts")
+        or (item.get("item_box") or {}).get("created_at")
     )
-    published = time_ago(created_at)
+    published = time_ago(created_at) if created_at else "Just listed"
 
     # Feedback — try multiple field names Vinted uses
     feedback_score = (
