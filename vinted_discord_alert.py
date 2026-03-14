@@ -162,13 +162,27 @@ def matches_exclude_words(item: dict, exclude_words: list) -> bool:
 
 # ── Discord helpers ────────────────────────────
 
-def time_ago(epoch) -> str:
-    if not epoch:
+def time_ago(value) -> str:
+    if not value:
         return "Unknown"
+    ts = None
+    # Try Unix timestamp
     try:
-        diff = int(time.time()) - int(epoch)
+        ts = int(float(str(value)))
     except (TypeError, ValueError):
-        return "Unknown"
+        pass
+    # Try ISO 8601 string e.g. "2024-01-15T10:30:00+00:00"
+    if ts is None:
+        try:
+            from datetime import timezone as tz
+            s = str(value)[:19]  # take just "2024-01-15T10:30:00"
+            dt = datetime.strptime(s, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=tz.utc)
+            ts = int(dt.timestamp())
+        except Exception:
+            return "Unknown"
+    diff = int(time.time()) - ts
+    if diff < 0:
+        return "just now"
     if diff < 60:
         return f"{diff} second{'s' if diff != 1 else ''} ago"
     elif diff < 3600:
@@ -235,15 +249,28 @@ def build_payload(label: str, item: dict, colour: int) -> dict:
     status_id    = item.get("status_id")
     condition    = CONDITION_LABELS.get(status_id, raw_status) if status_id else raw_status or "—"
 
-    # Published time
-    created_at = item.get("created_at_ts") or item.get("created_at")
-    published  = time_ago(created_at)
+    # Published time — try all possible field names
+    created_at = (
+        item.get("created_at_ts")
+        or item.get("created_at")
+        or item.get("updated_at_ts")
+        or item.get("updated_at")
+    )
+    published = time_ago(created_at)
 
-    # Feedback
-    feedback_score = user.get("feedback_reputation")
-    feedback_count = user.get("positive_feedback_count", 0)
-    stars          = star_rating(feedback_score)
-    feedback_str   = f"{stars} ({feedback_count})"
+    # Feedback — try multiple field names Vinted uses
+    feedback_score = (
+        user.get("feedback_reputation")
+        or user.get("feedback_score")
+        or item.get("user", {}).get("feedback_reputation")
+    )
+    feedback_count = (
+        user.get("positive_feedback_count")
+        or user.get("feedback_count")
+        or 0
+    )
+    stars        = star_rating(feedback_score)
+    feedback_str = f"{stars} ({feedback_count})"
 
     # Photo
     photos    = item.get("photos", [])
