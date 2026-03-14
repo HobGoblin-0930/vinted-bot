@@ -32,21 +32,13 @@ DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK", "")
 # ──────────────────────────────────────────────
 SEARCHES = [
     {
-        "label": "Nike Air Max 90",
-        "search_text": "Nike Air Max 90",
-        "max_price": 60,        # set to None for no limit
-        "min_price": None,
-        "size_ids": [],         # see SIZE IDs below
-        "brand_ids": [],        # see BRAND IDs below
-        "order": "newest_first",
-    },
-    {
-        "label": "Levi's 501 jeans",
-        "search_text": "Levi's 501",
-        "max_price": 40,
+        "label": "Xbox Controller",
+        "search_text": "xbox controller",
+        "max_price": 15,
         "min_price": None,
         "size_ids": [],
         "brand_ids": [],
+        "status_ids": [1, 2, 3, 4],  # excludes "new with tags" (status 6)
         "order": "newest_first",
     },
 ]
@@ -125,16 +117,17 @@ def fetch_listings(search: dict) -> list:
         params["size_ids[]"] = search["size_ids"]
     if search.get("brand_ids"):
         params["brand_ids[]"] = search["brand_ids"]
+    if search.get("status_ids"):
+        params["status_ids[]"] = search["status_ids"]
 
     url = f"https://{VINTED_DOMAIN}/api/v2/catalog/items"
-
     try:
         r = SESSION.get(url, params=params, headers=HEADERS, timeout=15)
         r.raise_for_status()
         return r.json().get("items", [])
     except requests.HTTPError as e:
         if e.response is not None and e.response.status_code == 401:
-            print("  [!] Session expired — refreshing cookie…")
+            print("  [!] Session expired — refreshing cookie...")
             get_vinted_session_cookie()
         else:
             print(f"  [!] HTTP error: {e}")
