@@ -54,6 +54,11 @@
       4
     ],
     "order": "newest_first",
-    "enabled": false
+    "enabled": true,
+    "keywords": [
+      "xbox series"
+    ],
+    "exclude_words": [],
+    "channel_id": "1482415297179684966"
   }
 ]
