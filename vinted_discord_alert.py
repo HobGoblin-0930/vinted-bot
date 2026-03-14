@@ -1,12 +1,13 @@
 """
 Vinted → Discord Alert Bot
 ==========================
-- Reads searches from vinted_searches.json (managed via the dashboard)
-- Uses a Discord Bot Token for real working buttons
-- Loops every 5 seconds for 55 seconds (12 checks per GitHub Actions run)
+- Reads searches from vinted_searches.json (managed via dashboard)
+- Uses Discord Bot Token for real working buttons
+- Loops every 5 seconds for 55 seconds per run
+- Supports exclude words, multiple keywords, all condition types
 
 GitHub Secrets needed:
-    DISCORD_BOT_TOKEN   — your bot token from discord.com/developers
+    DISCORD_BOT_TOKEN   — your Discord bot token
     DISCORD_CHANNEL_ID  — right-click channel in Discord → Copy Channel ID
 """
 
@@ -17,15 +18,13 @@ import requests
 from datetime import datetime, timezone
 
 # ──────────────────────────────────────────────
-#  DISCORD CONFIG (loaded from GitHub secrets)
+#  DISCORD CONFIG
 # ──────────────────────────────────────────────
 DISCORD_BOT_TOKEN  = os.environ.get("DISCORD_BOT_TOKEN", "")
 DISCORD_CHANNEL_ID = os.environ.get("DISCORD_CHANNEL_ID", "")
 
 # ──────────────────────────────────────────────
-#  SEARCHES — managed via dashboard
-#  Loaded from vinted_searches.json automatically.
-#  You can also hardcode fallback searches here.
+#  FALLBACK SEARCHES (used if vinted_searches.json missing)
 # ──────────────────────────────────────────────
 FALLBACK_SEARCHES = [
     {
@@ -37,26 +36,30 @@ FALLBACK_SEARCHES = [
         "brand_ids": [],
         "status_ids": [1, 2, 3, 4],
         "order": "newest_first",
+        "exclude_words": [],
         "enabled": True,
     },
 ]
 
-# How often to check within each GitHub Actions run (seconds)
 CHECK_INTERVAL = 5
+RUN_DURATION   = 55
 
-# How long to run before exiting — keep under 60 for GitHub Actions
-RUN_DURATION = 55
-
-# Country domain: co.uk  fr  de  nl  be  es  it  pl  cz  lt ...
-VINTED_DOMAIN = "www.vinted.co.uk"
+VINTED_DOMAIN   = "www.vinted.co.uk"
 CURRENCY_SYMBOL = "£"
 
-
 # ──────────────────────────────────────────────
-#  INTERNALS
+#  CONDITION LABELS
 # ──────────────────────────────────────────────
+CONDITION_LABELS = {
+    1: "New without tags",
+    2: "Very good condition",
+    3: "Good condition",
+    4: "Satisfactory condition",
+    5: "Not specified",
+    6: "New with tags",
+}
 
-STATE_FILE   = "vinted_seen_ids.json"
+STATE_FILE    = "vinted_seen_ids.json"
 SEARCHES_FILE = "vinted_searches.json"
 
 VINTED_HEADERS = {
@@ -78,16 +81,14 @@ SESSION = requests.Session()
 # ── Searches ───────────────────────────────────
 
 def load_searches() -> list:
-    """Load searches from JSON file, falling back to hardcoded list."""
     if os.path.exists(SEARCHES_FILE):
         with open(SEARCHES_FILE) as f:
             all_searches = json.load(f)
-        # Only return enabled searches
         enabled = [s for s in all_searches if s.get("enabled", True)]
         if enabled:
             print(f"  Loaded {len(enabled)} search(es) from {SEARCHES_FILE}")
             return enabled
-    print(f"  Using fallback searches ({len(FALLBACK_SEARCHES)} search(es))")
+    print(f"  Using fallback searches")
     return FALLBACK_SEARCHES
 
 
@@ -148,12 +149,26 @@ def fetch_listings(search: dict) -> list:
     return []
 
 
-# ── Discord ────────────────────────────────────
+def matches_exclude_words(item: dict, exclude_words: list) -> bool:
+    """Returns True if item title contains any excluded word."""
+    if not exclude_words:
+        return False
+    title = (item.get("title") or "").lower()
+    for word in exclude_words:
+        if word.lower().strip() in title:
+            return True
+    return False
+
+
+# ── Discord helpers ────────────────────────────
 
 def time_ago(epoch) -> str:
     if not epoch:
         return "Unknown"
-    diff = int(time.time()) - int(epoch)
+    try:
+        diff = int(time.time()) - int(epoch)
+    except (TypeError, ValueError):
+        return "Unknown"
     if diff < 60:
         return f"{diff} second{'s' if diff != 1 else ''} ago"
     elif diff < 3600:
@@ -167,37 +182,70 @@ def time_ago(epoch) -> str:
         return f"{d} day{'s' if d != 1 else ''} ago"
 
 
-def star_rating(score) -> str:
-    if score is None:
+def star_rating(reputation) -> str:
+    """
+    Vinted feedback_reputation is a float between 0.0 and 1.0.
+    Convert to 0-5 stars.
+    """
+    if reputation is None:
         return "No ratings"
-    full = max(0, min(5, round(score * 5)))
-    return "⭐" * full + "✩" * (5 - full)
+    try:
+        score = float(reputation)
+        # reputation is 0.0 to 1.0 — multiply by 5 for star count
+        stars = round(score * 5)
+        stars = max(0, min(5, stars))
+        return "⭐" * stars + "✩" * (5 - stars)
+    except (TypeError, ValueError):
+        return "No ratings"
 
 
-def build_payload(label: str, item: dict, colour: int) -> dict:
+def get_item_url(item: dict) -> str:
     url = item.get("url", "")
     if url and not url.startswith("http"):
         url = f"https://{VINTED_DOMAIN}{url}"
+    return url
 
-    user = item.get("user", {})
-    seller = user.get("login", "Unknown seller")
-    seller_id = user.get("id")
-    seller_url = f"https://{VINTED_DOMAIN}/member/{seller_id}" if seller_id else url
 
+def build_payload(label: str, item: dict, colour: int) -> dict:
+    item_url   = get_item_url(item)
+    item_id    = item.get("id", "")
+
+    # Construct specific action URLs
+    buy_url       = f"https://{VINTED_DOMAIN}/transaction/buy/item/{item_id}" if item_id else item_url
+    negotiate_url = f"https://{VINTED_DOMAIN}/items/{item_id}/make_offer" if item_id else item_url
+    details_url   = item_url
+
+    # Seller
+    user       = item.get("user", {})
+    seller     = user.get("login", "Unknown seller")
+    seller_id  = user.get("id")
+    seller_url = f"https://{VINTED_DOMAIN}/member/{seller_id}" if seller_id else item_url
+
+    # Price
     price_obj = item.get("price", {})
     amount    = price_obj.get("amount", "?")
     price_str = f"{CURRENCY_SYMBOL}{amount}"
 
+    # Fields
     brand      = item.get("brand_title") or "—"
     size       = item.get("size_title")  or "—"
-    condition  = item.get("status")      or "—"
+
+    # Condition — use label map
+    raw_status   = item.get("status") or ""
+    status_id    = item.get("status_id")
+    condition    = CONDITION_LABELS.get(status_id, raw_status) if status_id else raw_status or "—"
+
+    # Published time
     created_at = item.get("created_at_ts") or item.get("created_at")
     published  = time_ago(created_at)
 
+    # Feedback
     feedback_score = user.get("feedback_reputation")
     feedback_count = user.get("positive_feedback_count", 0)
-    feedback_str   = f"{star_rating(feedback_score)} ({feedback_count})"
+    stars          = star_rating(feedback_score)
+    feedback_str   = f"{stars} ({feedback_count})"
 
+    # Photo
     photos    = item.get("photos", [])
     image_url = None
     if photos:
@@ -208,9 +256,9 @@ def build_payload(label: str, item: dict, colour: int) -> dict:
         )
 
     embed = {
-        "author": {"name": seller, "url": seller_url},
+        "author": {"name": f"👤 {seller}", "url": seller_url},
         "title": item.get("title", "New listing"),
-        "url": url,
+        "url": item_url,
         "color": colour,
         "fields": [
             {"name": "⏳ Published", "value": published,    "inline": True},
@@ -231,10 +279,10 @@ def build_payload(label: str, item: dict, colour: int) -> dict:
         {
             "type": 1,
             "components": [
-                {"type": 2, "style": 5, "label": "Details",  "emoji": {"name": "🔗"}, "url": url},
-                {"type": 2, "style": 5, "label": "Buy",      "emoji": {"name": "🛒"}, "url": url},
-                {"type": 2, "style": 5, "label": "Negotiate","emoji": {"name": "💬"}, "url": url},
-                {"type": 2, "style": 5, "label": "Autobuy",  "emoji": {"name": "✅"}, "url": url},
+                {"type": 2, "style": 5, "label": "Details",   "emoji": {"name": "🔗"}, "url": details_url},
+                {"type": 2, "style": 5, "label": "Buy",       "emoji": {"name": "🛒"}, "url": buy_url},
+                {"type": 2, "style": 5, "label": "Negotiate", "emoji": {"name": "💬"}, "url": negotiate_url},
+                {"type": 2, "style": 5, "label": "Autobuy",   "emoji": {"name": "✅"}, "url": buy_url},
             ],
         }
     ]
@@ -280,7 +328,6 @@ def run():
     validate()
 
     searches = load_searches()
-
     if not searches:
         print("No searches configured — nothing to do.")
         return
@@ -290,7 +337,9 @@ def run():
     print(f"  Checking every {CHECK_INTERVAL}s for {RUN_DURATION}s")
     print("=" * 55)
     for s in searches:
-        print(f"  * {s['label']}")
+        excl = s.get("exclude_words", [])
+        excl_str = f" | exclude: {', '.join(excl)}" if excl else ""
+        print(f"  * {s['label']}{excl_str}")
     print()
 
     get_vinted_session_cookie()
@@ -305,9 +354,7 @@ def run():
             items = fetch_listings(search)
             seen.setdefault(key, [])
             for item in items:
-                iid = str(item["id"])
-                if iid not in seen[key]:
-                    seen[key].append(iid)
+                seen[key].append(str(item["id"]))
         save_seen(seen)
         print("Done. Future runs will alert on new listings.\n")
         return
@@ -326,17 +373,22 @@ def run():
         found_new = 0
 
         for search in searches:
-            key    = search["label"]
-            colour = label_colours.get(key, COLOURS[0])
-            items  = fetch_listings(search)
+            key           = search["label"]
+            colour        = label_colours.get(key, COLOURS[0])
+            exclude_words = search.get("exclude_words", [])
+            items         = fetch_listings(search)
             seen.setdefault(key, [])
 
             for item in items:
                 iid = str(item["id"])
-                if iid not in seen[key]:
-                    seen[key].append(iid)
-                    send_discord(key, item, colour)
-                    found_new += 1
+                if iid in seen[key]:
+                    continue
+                seen[key].append(iid)
+                if matches_exclude_words(item, exclude_words):
+                    print(f"\n  [skip] '{item.get('title')}' matches exclude words")
+                    continue
+                send_discord(key, item, colour)
+                found_new += 1
 
         save_seen(seen)
         print(f"{found_new} new item(s)." if found_new else "nothing new.")
