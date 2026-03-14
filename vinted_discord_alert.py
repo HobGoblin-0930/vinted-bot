@@ -25,7 +25,7 @@ from datetime import datetime
 # ──────────────────────────────────────────────
 #  DISCORD WEBHOOK
 # ──────────────────────────────────────────────
-DISCORD_WEBHOOK_URL = "PASTE_YOUR_WEBHOOK_URL_HERE"
+DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK", "")
 
 # ──────────────────────────────────────────────
 #  CONFIGURE YOUR SEARCHES HERE
