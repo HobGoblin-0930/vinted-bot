@@ -251,18 +251,13 @@ def build_payload(label: str, item: dict, colour: int) -> dict:
     item_url   = get_item_url(item)
     item_id    = item.get("id", "")
 
-    # Fetch full item to get accurate date, feedback, condition etc.
-    full = fetch_item_details(item_id)
-    if full:
-        item = {**item, **full}
-        # Merge user data
-        if full.get("user"):
-            item["user"] = {**item.get("user", {}), **full["user"]}
-        print(f"  [debug] full item keys = {list(full.keys())}")
-        print(f"  [debug] full user keys = {list(full.get('user', {}).keys())}")
-        print(f"  [debug] created_at = {repr(full.get('created_at'))}")
-        print(f"  [debug] created_at_ts = {repr(full.get('created_at_ts'))}")
-        print(f"  [debug] feedback_reputation = {repr(full.get('user', {}).get('feedback_reputation'))}")
+    # Debug: log raw search item fields
+    print(f"  [debug] item keys = {list(item.keys())}")
+    print(f"  [debug] user keys = {list(item.get('user', {}).keys())}")
+    print(f"  [debug] created_at = {repr(item.get('created_at'))}")
+    print(f"  [debug] created_at_ts = {repr(item.get('created_at_ts'))}")
+    print(f"  [debug] last_push_up_at = {repr(item.get('last_push_up_at'))}")
+    print(f"  [debug] user = {item.get('user', {})}")
 
     # Construct specific action URLs
     buy_url       = f"https://{VINTED_DOMAIN}/transaction/buy/item/{item_id}" if item_id else item_url
